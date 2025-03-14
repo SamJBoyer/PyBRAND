@@ -1,0 +1,2 @@
+run this command: 
+pytest --cov=brandlite.pynode_tools --cov-report=html
