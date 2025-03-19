@@ -1,0 +1,11 @@
+Metadata-Version: 2.2
+Name: PyBRAND
+Version: 0.1.0
+Summary: Python tools for building BRAND nodes in Python
+Home-page: https://github.com/yourusername/pybrand
+Author: Samuel James Boyer
+Author-email: sam.james.boyer@gmail.com
+Dynamic: author
+Dynamic: author-email
+Dynamic: home-page
+Dynamic: summary

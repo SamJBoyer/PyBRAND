@@ -10,7 +10,7 @@ import json
 import sys
 import os
 import sys
-from brandlite import pynode_tools as PNT
+from . import pynode_tools as PNT
 from litework import python_analysis_tools as PAT
 from redis import Redis
 import builtins
@@ -28,6 +28,7 @@ class BRANDNode():
         argp.add_argument('-i', '--redis_host', type=str, required=True, default='localhost')
         argp.add_argument('-p', '--redis_port', type=int, required=True, default=6379)
         argp.add_argument('-s', '--redis_socket', type=str, required=False)
+        argp.add_argument('-a', '--password', type=str, required=False)
         args = argp.parse_args()
 
         len_args = len(vars(args))
@@ -40,6 +41,7 @@ class BRANDNode():
         redis_host = args.redis_host
         redis_port = args.redis_port
         redis_socket = args.redis_socket
+        password = args.password
 
         # connect to Redis
         self.r = self.connect_to_redis(redis_host, redis_port, redis_socket)
@@ -72,7 +74,7 @@ class BRANDNode():
         parameters = decode[0][1]['parameters']
         return parameters
 
-    def connect_to_redis(self, redis_host, redis_port, redis_socket=None):
+    def connect_to_redis(self, redis_host, redis_port, redis_password=None, redis_socket=None):
         """
         Establish connection to Redis and post initialized status to respective Redis stream
         If we supply a -h flag that starts with a number, then we require a -p for the port
@@ -96,7 +98,7 @@ class BRANDNode():
                 print(f"[{self.NAME}] Redis connection established on socket:"
                       f" {redis_socket}")
             else:
-                r = Redis(redis_host, redis_port, retry_on_timeout=True)
+                r = Redis(redis_host, redis_port, password = 'oogert', retry_on_timeout=True)
                 print(f"[{self.NAME}] Redis connection established on host:"
                       f" {redis_host}, port: {redis_port}")
         except ConnectionError as e:
