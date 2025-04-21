@@ -1,0 +1,2 @@
+i should git ignore the egg and pycache stuff
+

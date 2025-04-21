@@ -20,7 +20,6 @@ import traceback
 class BRANDNode():
     def __init__(self):
 
-        print(f"file comes from {os.path.abspath(__file__)}")
         # parse input arguments
         argp = argparse.ArgumentParser()
         
@@ -51,9 +50,9 @@ class BRANDNode():
         self.__stream_ids = {}
         self.parameters = self.init_params(self.__stream_ids)
 
+    
 
-
-        signal.signal(signal.SIGINT, self.terminate)
+        signal.signal(signal.SIGTERM, self.terminate)
 
         #silence all print statements based on silence parameters
         self.silence = self.parameters.get('silence', False)
@@ -280,8 +279,9 @@ class BRANDNode():
         """
         pass
 
+    # meant to be overridden 
     def terminate(self, sig, frame):
-        logging.info('SIGINT received, Exiting')
+        #logging.info('SIGINT received, Exiting')
         self.r.close()
         # self.sock.close()
         sys.exit(0)
