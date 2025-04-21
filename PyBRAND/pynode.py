@@ -4,15 +4,13 @@
 
 import sys
 import argparse
-import logging
 import signal
 import json
 import sys
 import os
-import sys
 from . import pynode_tools as PNT
 from litework import python_analysis_tools as PAT
-from redis import Redis
+import redis
 import builtins
 import traceback
 
@@ -21,34 +19,22 @@ class BRANDNode():
     def __init__(self):
 
         # parse input arguments
-        argp = argparse.ArgumentParser()
-        
-        argp.add_argument('-n', '--nickname', type=str, required=True, default='node')
-        argp.add_argument('-i', '--redis_host', type=str, required=True, default='localhost')
-        argp.add_argument('-p', '--redis_port', type=int, required=True, default=6379)
-        argp.add_argument('-s', '--redis_socket', type=str, required=False)
-        argp.add_argument('-a', '--password', type=str, required=False)
-        args = argp.parse_args()
-
-        len_args = len(vars(args))
-        if (len_args < 3):
-            print("Arguments passed: {}".format(len_args))
-            print("Please check the arguments passed")
-            sys.exit(1)
-
-        self.NAME = args.nickname
-        redis_host = args.redis_host
-        redis_port = args.redis_port
-        redis_socket = args.redis_socket
-        password = args.password
+        parser = argparse.ArgumentParser()
+        parser.add_argument('-n', '--nickname', type=str, required=True, default='node')
+        parser.add_argument('-i', '--host', type=str, required=True, default='localhost')
+        parser.add_argument('-p', '--port', type=str, required=True, default=6379)
+        parser.add_argument('-a', '--password', type=str, required=False)
+        args = vars(parser.parse_args())
+        self.NAME = args["nickname"]
+        args.pop("nickname")
 
         # connect to Redis
-        self.r = self.connect_to_redis(redis_host, redis_port, redis_socket)
+        self.r = self.connect_to_redis(**args)
 
         # initialize parameters
         self.supergraph_id = '0-0'
         self.__stream_ids = {}
-        self.parameters = self.init_params(self.__stream_ids)
+        self.parameters = self.get_parameters()
 
     
 
@@ -66,14 +52,8 @@ class BRANDNode():
         #print the pid to stream for process tracking
         self.r.xadd("pid_stream", {self.NAME: os.getpid()})
 
-    def init_params(self, stream_ids):
-        print(self.NAME)
-        param_entry = PNT.read_latest(self.r, self.NAME, stream_ids)
-        decode = PNT.decode(self.r, param_entry, "parameters", "serial")
-        parameters = decode[0][1]['parameters']
-        return parameters
 
-    def connect_to_redis(self, redis_host, redis_port, redis_password=None, redis_socket=None):
+    def connect_to_redis(self, **kwargs):
         """
         Establish connection to Redis and post initialized status to respective Redis stream
         If we supply a -h flag that starts with a number, then we require a -p for the port
@@ -82,24 +62,14 @@ class BRANDNode():
         # XADD nickname_state * code 0 status "initialized"
         """
 
-        # redis_connection_parse = argparse.ArgumentParser()
-        # redis_connection_parse.add_argument('-i', '--redis_host', type=str, required=True, default='localhost')
-        # redis_connection_parse.add_argument('-p', '--redis_port', type=int, required=True, default=6379)
-        # redis_connection_parse.add_argument('-n', '--nickname', type=str, required=True, default='redis_v0.1')
-
-        # args = redis_connection_parse.parse_args()
-        # len_args = len(vars(args))
-        # print("Redis arguments passed:{}".format(len_args))
-
         try:
-            if redis_socket:
-                r = Redis(unix_socket_path=redis_socket)
-                print(f"[{self.NAME}] Redis connection established on socket:"
-                      f" {redis_socket}")
-            else:
-                r = Redis(redis_host, redis_port, password = 'oogert', retry_on_timeout=True)
-                print(f"[{self.NAME}] Redis connection established on host:"
-                      f" {redis_host}, port: {redis_port}")
+            if "socket" in kwargs:
+                #r = redis.StrictRedis(unix_socket_path=redis_socket)
+                print("redis socket isn't currently implemented on windows and will never be lmao")
+                #print(f"[{self.NAME}] Redis connection established on socket:"f" {redis_socket}")
+
+            r = redis.StrictRedis(**kwargs)
+            #print(f"[{self.NAME}] Redis connection established on host:
         except ConnectionError as e:
             print(f"[{self.NAME}] Error with Redis connection, check again: {e}")
             sys.exit(1)
@@ -169,67 +139,9 @@ class BRANDNode():
         """
         PNT.add_to_stream(self.r, stream_name, data, dtype)
 
-
     #likely to get phased out
-    def getParametersFromSupergraph(self, complete_supergraph=False):
-        """
-        Read node parameters from Redis
-
-        Parameters
-        ----------
-        complete_supergraph : (optional) boolean
-            False returns just the node's parameters.
-            True returns the complete supergraph
-            straight from the Redis xrange call.
-
-        Returns
-        -------
-        new_params : list of dict
-            Each list item will be a dictionary of the
-            node's parameters in that supergraph
-        """
-        model_stream_entries = self.r.xrange(
-            b'supergraph_stream', '('+self.supergraph_id, '+')
-
-        if not model_stream_entries:
-            return None
-
-        self.supergraph_id = model_stream_entries[-1][0]
-        self.supergraph_id = self.supergraph_id.decode('utf-8')
-
-        if complete_supergraph:
-            return model_stream_entries
-
-        # {} means the node was not listed in the corresponding supergraph
-        new_params = [{} for i in model_stream_entries]
-
-        for i, entry in enumerate(model_stream_entries):
-
-            model_data = json.loads(entry[1][b'data'].decode())
-
-            for node in model_data['nodes']:
-                if model_data['nodes'][node]['nickname'] == self.NAME:
-                    new_params[i] = model_data['nodes'][node]['parameters']
-
-        return new_params
-
-    def initializeParameters(self):
-        """
-        Read node parameters from Redis.
-        ...
-        """
-        node_parameters = self.getParametersFromSupergraph()
-        if node_parameters is None:
-            print(f"[{self.NAME}] No model published to supergraph_stream in Redis")
-            #sys.exit(1)
-        else:
-            # for parameter in node_parameters:
-            # self.parameters[parameter['name']] = parameter['value']
-            for key, value in node_parameters[-1].items():
-                self.parameters[key] = value
-
-        # print(self.parameters)
-
+    def get_parameters(self):
+        return json.loads(self.r.hget("PARAMETERS", self.NAME).decode())
 
     #run the function. override with caution because the logic to capture the error trace is implemented here
     def run(self):
