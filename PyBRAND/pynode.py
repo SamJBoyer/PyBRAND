@@ -1,7 +1,3 @@
-# BRAND node template
-# Author: Sam Boyer
-# Adapted from code by: David Brandman and Kushant Patel and Mattia Rigotti
-
 import sys
 import argparse
 import signal
@@ -9,7 +5,6 @@ import json
 import sys
 import os
 from . import pynode_tools as PNT
-from litework import python_analysis_tools as PAT
 import redis
 import builtins
 import traceback
@@ -29,7 +24,7 @@ class BRANDNode():
         args.pop("nickname")
 
         # connect to Redis
-        self.r = self.connect_to_redis(**args)
+        self.realtime_database, self.persistant_database = self.connect_to_redis(**args)
 
         # initialize parameters
         self.supergraph_id = '0-0'
@@ -40,7 +35,7 @@ class BRANDNode():
 
         signal.signal(signal.SIGTERM, self.terminate)
 
-        #silence all print statements based on silence parameters
+        #silence all print statements based on silence parameters. I lowkey think this might be a bad feature
         self.silence = self.parameters.get('silence', False)
         print(f"[{self.NAME}] Silence: {self.silence}")
         builtins._original_print = builtins.print
@@ -50,7 +45,7 @@ class BRANDNode():
         builtins.print = custom_print
 
         #print the pid to stream for process tracking
-        self.r.xadd("pid_stream", {self.NAME: os.getpid()})
+        self.realtime_database.xadd("pid_stream", {self.NAME: os.getpid()})
 
 
     def connect_to_redis(self, **kwargs):
@@ -68,7 +63,8 @@ class BRANDNode():
                 print("redis socket isn't currently implemented on windows and will never be lmao")
                 #print(f"[{self.NAME}] Redis connection established on socket:"f" {redis_socket}")
 
-            r = redis.StrictRedis(**kwargs)
+            r_temp = redis.StrictRedis(**kwargs, db=0)
+            r_pers = redis.StrictRedis(**kwargs, db=1)
             #print(f"[{self.NAME}] Redis connection established on host:
         except ConnectionError as e:
             print(f"[{self.NAME}] Error with Redis connection, check again: {e}")
@@ -78,9 +74,9 @@ class BRANDNode():
             'code': 0,
             'status': 'initialized',
         }
-        r.xadd(self.NAME + '_state', initial_data)
+        r_temp.xadd(self.NAME + '_state', initial_data)
 
-        return r
+        return r_temp, r_pers
 
     # check to see that the inputed dtype is a valid numpy dtype by making a test array and catching any errors
 
@@ -99,33 +95,33 @@ class BRANDNode():
         """
         you should always do this as best practise. makes a stream named {stream_name}_init with the dype details 
         """
-        PNT.init_stream(self.r, stream_name, dtype)
+        PNT.init_stream(self.realtime_database, stream_name, dtype)
 
     def get_stream_init(self, stream_name):
         """
         gets the full stream init entry
         """
-        return PNT.get_stream_init(self.r, stream_name)
+        return PNT.get_stream_init(self.realtime_database, stream_name)
 
     def get_stream_dtype(self, stream_name):
         """
         gets just the dtype from the stream init 
         """
-        return PNT.get_stream_dtype(self.r, stream_name)
+        return PNT.get_stream_dtype(self.realtime_database, stream_name)
 
     # get the latest enread entry from the redis stream
     def read_latest(self, stream_name):
         """
         reads the latest entry from the stream. won't read duplicates and will return null instead 
         """
-        return PNT.read_latest(self.r, stream_name, self.__stream_ids)
+        return PNT.read_latest(self.realtime_database, stream_name, self.__stream_ids)
 
     # take a series of stream entries and decode them into kvps with the time stamp as index 1 and the value dictionary as index 2 
     def decode(self, redis_entries, stream_name = None, dtype = None):
         """
         decodes the stream entries into a list of dictionaries using the stream init or the provided dtype. 
         """
-        return PNT.decode(self.r, redis_entries, stream_name, dtype)
+        return PNT.decode(self.realtime_database, redis_entries, stream_name, dtype)
 
     def encode_from_dtype(self, data, dtype):
         """
@@ -137,64 +133,29 @@ class BRANDNode():
         """
         encodes the data and adds it to the redis stream
         """
-        PNT.add_to_stream(self.r, stream_name, data, dtype)
+        PNT.add_to_stream(self.realtime_database, stream_name, data, dtype)
 
-    #likely to get phased out
     def get_parameters(self):
-        return json.loads(self.r.hget("PARAMETERS", self.NAME).decode())
+        return json.loads(self.persistant_database.hget("PARAMETERS", self.NAME).decode())
 
     #run the function. override with caution because the logic to capture the error trace is implemented here
     def run(self):
         try:
             while True:
                 self.work()
-                self.updateParameters()
         except Exception:
             #uncaught error occured. logging it to the redis error stream before exiting
             error = traceback.format_exc()
             print(f"Uncaught error occured during runtime. Error: {error}")
-            self.r.xadd("error_stream", {self.NAME: error})
-
+            self.realtime_database.xadd("error_stream", {self.NAME: error})
 
     def work(self):
-        """
-        # This is the business logic for the function.
-        # At the end of its cycle, it should output the following:
-        # XADD nickname_streamOutputName [inputRun M] run nRuns parameter N name1 value1 name2 value2
-        # where streamOutputName is the name provided in the YAML file (usually: output)
-        # and the name1 is the name variable for the output stream, and the value being the payload
-        # and N is the value of parameter_count global variable
-        # Note there is an exact match between the name value pairs and what is specified in the YAML
-        # If inputs is not [] in the YAML file, then inputRun contains the
-        # nRuns count of the previous input used for populating this stream output
-        """
-        pass
-
-    # def write_brand(self):
-
-    #     self.sync_dict_json = json.dumps(self.sync_dict)
-
-    #     self.output_entry[self.time_key] = time.monotonic()
-    #     self.output_entry[self.sync_key] = self.sync_dict_json.encode()
-
-    #     self.r.xadd(self.output_stream, self.output_entry)
-
-    def updateParameters(self):
-        """
-        This function reads from the nickname_parameters stream,
-        and knows how to parse all parameters that (1) do not have static variable
-        specified, or (2) are static: false specified
-        It does not block on the XREAD call. Whenever there is a new stream value,
-        it assumes that the new value is meaningful (since it should have been checked
-        by the supervisor node) and then updates the parameters = {} value
-        If this function updates the parameters{} dictionary, then it increments parameter_count
-        """
         pass
 
     # meant to be overridden 
     def terminate(self, sig, frame):
         #logging.info('SIGINT received, Exiting')
-        self.r.close()
+        self.realtime_database.close()
         # self.sock.close()
         sys.exit(0)
 
